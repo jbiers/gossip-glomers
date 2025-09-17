@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"sync"
-	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"github.com/sirupsen/logrus"
@@ -32,20 +31,6 @@ func main() {
 		currentStorageVersion: 0,
 	}
 
-	broadcastTicker := time.NewTicker(10 * time.Millisecond)
-	defer broadcastTicker.Stop()
-
-	go func() {
-		for {
-			select {
-			case <-broadcastTicker.C:
-				for neighborID := range s.neighbors {
-					s.sendBroadcast(neighborID)
-				}
-			}
-		}
-	}()
-
 	// how are these handlers implemented? are they async?
 	s.node.Handle("broadcast", s.broadcastHandler)
 	s.node.Handle("read", s.readHandler)
@@ -57,27 +42,20 @@ func main() {
 
 }
 
-func (s *Server) sendBroadcast(dstNodeID NodeID) {
+func (s *Server) sendBroadcast(dstNodeID NodeID, message float64) {
 	body := &BroadcastBody{
 		Type: BroadcastType,
 	}
 
-	for _, value := range s.storage {
-		if s.neighbors[dstNodeID] < NodeStorageVersion(value) {
-			body.Message = &value
-			err := s.node.RPC(string(dstNodeID), body, s.broadcastOKHandler)
+	body.Message = &message
+	err := s.node.RPC(string(dstNodeID), body, s.broadcastOKHandler)
 
-			s.neighbors[dstNodeID] = NodeStorageVersion(value)
-
-			if err != nil {
-				s.logger.Error(err)
-			}
-		}
+	if err != nil {
+		s.logger.Error(err)
 	}
 }
 
 func (s *Server) broadcastOKHandler(msg maelstrom.Message) error {
-
 	return nil
 }
 
@@ -95,6 +73,12 @@ func (s *Server) broadcastHandler(msg maelstrom.Message) error {
 	if !s.storageIndex[*body.Message] {
 		s.storage = append(s.storage, *body.Message)
 		s.storageIndex[*body.Message] = true
+
+		for neighborID := range s.neighbors {
+			if neighborID != NodeID(msg.Src) {
+				s.sendBroadcast(neighborID, *body.Message)
+			}
+		}
 	}
 
 	s.currentStorageVersion = *body.Message
