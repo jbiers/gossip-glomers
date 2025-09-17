@@ -1,7 +1,5 @@
 package main
 
-import maelstrom "github.com/jepsen-io/maelstrom/demo/go"
-
 const (
 	BroadcastType   = "broadcast"
 	BroadcastOKType = "broadcast_ok"
@@ -12,16 +10,28 @@ const (
 )
 
 type BroadcastBody struct {
-	maelstrom.MessageBody
-	Message *float64 `json:"message,omitempty"`
+	Type      string   `json:"type,omitempty"`
+	MsgID     int      `json:"msg_id,omitempty"`
+	InReplyTo int      `json:"in_reply_to,omitempty"`
+	Code      int      `json:"code,omitempty"`
+	Text      string   `json:"text,omitempty"`
+	Message   *float64 `json:"message,omitempty"`
 }
 
 type ReadBody struct {
-	maelstrom.MessageBody
-	Messages []float64 `json:"messages,omitempty"`
+	Type      string     `json:"type,omitempty"`
+	MsgID     int        `json:"msg_id,omitempty"`
+	InReplyTo int        `json:"in_reply_to,omitempty"`
+	Code      int        `json:"code,omitempty"`
+	Text      string     `json:"text,omitempty"`
+	Messages  *[]float64 `json:"messages,omitempty"`
 }
 
 type TopologyBody struct {
-	maelstrom.MessageBody
-	Topology map[string][]string `json:"topology,omitempty"`
+	Type      string              `json:"type,omitempty"`
+	MsgID     int                 `json:"msg_id,omitempty"`
+	InReplyTo int                 `json:"in_reply_to,omitempty"`
+	Code      int                 `json:"code,omitempty"`
+	Text      string              `json:"text,omitempty"`
+	Topology  map[string][]string `json:"topology,omitempty"`
 }

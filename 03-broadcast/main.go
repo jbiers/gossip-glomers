@@ -2,37 +2,83 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
+	"github.com/sirupsen/logrus"
 )
 
+type NodeID string
+type NodeStorageVersion float64
+
 type Server struct {
-	node        maelstrom.Node
-	storage     []float64
-	storageLock sync.RWMutex
-	neighbors   []string
+	node                  maelstrom.Node
+	storage               []float64
+	storageIndex          map[float64]bool
+	storageLock           sync.Mutex
+	neighbors             map[NodeID]NodeStorageVersion
+	logger                logrus.Logger
+	currentStorageVersion float64
 }
 
 func main() {
-
 	s := &Server{
-		node:      *maelstrom.NewNode(),
-		storage:   []float64{},
-		neighbors: []string{},
+		node:                  *maelstrom.NewNode(),
+		storage:               []float64{},
+		storageIndex:          map[float64]bool{},
+		neighbors:             map[NodeID]NodeStorageVersion{},
+		logger:                *logrus.New(),
+		currentStorageVersion: 0,
 	}
 
-	// goroutine that every 1 second broadcasts all of the cluster storage
+	broadcastTicker := time.NewTicker(10 * time.Millisecond)
+	defer broadcastTicker.Stop()
 
+	go func() {
+		for {
+			select {
+			case <-broadcastTicker.C:
+				for neighborID := range s.neighbors {
+					s.sendBroadcast(neighborID)
+				}
+			}
+		}
+	}()
+
+	// how are these handlers implemented? are they async?
 	s.node.Handle("broadcast", s.broadcastHandler)
 	s.node.Handle("read", s.readHandler)
 	s.node.Handle("topology", s.topologyHandler)
 
 	if err := s.node.Run(); err != nil {
-		log.Fatal(err)
+		s.logger.Fatal(err)
 	}
 
+}
+
+func (s *Server) sendBroadcast(dstNodeID NodeID) {
+	body := &BroadcastBody{
+		Type: BroadcastType,
+	}
+
+	for _, value := range s.storage {
+		if s.neighbors[dstNodeID] < NodeStorageVersion(value) {
+			body.Message = &value
+			err := s.node.RPC(string(dstNodeID), body, s.broadcastOKHandler)
+
+			s.neighbors[dstNodeID] = NodeStorageVersion(value)
+
+			if err != nil {
+				s.logger.Error(err)
+			}
+		}
+	}
+}
+
+func (s *Server) broadcastOKHandler(msg maelstrom.Message) error {
+
+	return nil
 }
 
 func (s *Server) broadcastHandler(msg maelstrom.Message) error {
@@ -45,7 +91,13 @@ func (s *Server) broadcastHandler(msg maelstrom.Message) error {
 	}
 
 	s.storageLock.Lock()
-	s.storage = append(s.storage, *body.Message)
+
+	if !s.storageIndex[*body.Message] {
+		s.storage = append(s.storage, *body.Message)
+		s.storageIndex[*body.Message] = true
+	}
+
+	s.currentStorageVersion = *body.Message
 
 	body.Type = BroadcastOKType
 	body.Message = nil
@@ -54,7 +106,6 @@ func (s *Server) broadcastHandler(msg maelstrom.Message) error {
 }
 
 func (s *Server) readHandler(msg maelstrom.Message) error {
-	defer s.storageLock.RUnlock()
 
 	var body ReadBody
 
@@ -62,9 +113,8 @@ func (s *Server) readHandler(msg maelstrom.Message) error {
 		return err
 	}
 
-	s.storageLock.RLock()
 	body.Type = ReadOKType
-	body.Messages = s.storage
+	body.Messages = &s.storage
 
 	return s.node.Reply(msg, body)
 }
@@ -76,7 +126,11 @@ func (s *Server) topologyHandler(msg maelstrom.Message) error {
 		return err
 	}
 
-	s.neighbors = body.Topology[s.node.ID()]
+	neighbors := body.Topology[s.node.ID()]
+
+	for _, neighbor := range neighbors {
+		s.neighbors[NodeID(neighbor)] = 0
+	}
 
 	body.Type = TopologyOKType
 	body.Topology = nil
